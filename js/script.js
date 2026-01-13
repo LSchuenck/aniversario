@@ -1,83 +1,229 @@
-// script.js — parallax/fade do hero + header transparente que vira sólido
+// ==================================================
+// script.js — RSVP (busca, grupo, confirmação)
+// + popup de sucesso
+// + refresh da página ao fechar
+// ==================================================
 
-document.addEventListener('DOMContentLoaded', () => {
-  const hero = document.querySelector('.hero');
-  const heroImg = document.querySelector('.hero-img');
-  const heroContent = document.querySelector('.hero-inner'); // (novo título/assinatura)
-  const overlay = document.querySelector('.hero-gradient');
+(() => {
+  const GET_CONVIDADOS_URL =
+    'https://x8ki-letl-twmt.n7.xano.io/api:OK3wCbOW/aniversarioCarlos/get/convidados';
 
-  // ===== Parallax/fade do hero (suave e robusto em mobile)
-  if (hero) {
-    let lastScrollY = window.scrollY;
-    let ticking = false;
+  const POST_CONFIRMACAO_URL =
+    'https://x8ki-letl-twmt.n7.xano.io/api:OK3wCbOW/aniversarioCarlos/confirm';
 
-    function getHeroHeight() {
-      return hero.getBoundingClientRect().height || window.innerHeight;
+  document.addEventListener('DOMContentLoaded', () => {
+    // Elementos
+    const inputNome = document.getElementById('buscaNome');
+    const btnBuscar = document.getElementById('btnBuscar');
+    const listaResultados = document.getElementById('resultadoBusca');
+
+    const grupoArea = document.getElementById('grupoArea');
+    const grupoLista = document.getElementById('grupoLista');
+    const form = document.getElementById('formConfirmacao');
+    const btnEnviar = document.getElementById('btnEnviar');
+    const statusMsg = document.getElementById('statusMsg');
+    const popup = document.getElementById('popupSucesso');
+    const btnOkPopup = document.getElementById('btnOkPopup');
+
+    // Estado
+    let convidados = [];
+    const grupos = new Map();
+    let convidadoSelecionado = null;
+    let enviando = false;
+
+    // Utils
+    const norm = (s) =>
+      (s || '')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .trim();
+
+    const setStatus = (msg, ok = null) => {
+      statusMsg.textContent = msg || '';
+      statusMsg.style.color =
+        ok === null ? '#333' : ok ? 'green' : '#b00020';
+    };
+
+    // =========================
+    // Carregar convidados
+    // =========================
+    async function carregarConvidados() {
+      try {
+        setStatus('Carregando convidados…');
+        btnEnviar.disabled = true;
+
+        const res = await fetch(GET_CONVIDADOS_URL, {
+          cache: 'no-store',
+          headers: { Accept: 'application/json' }
+        });
+
+        if (!res.ok) throw new Error('Erro ao buscar convidados');
+
+        const data = await res.json();
+        convidados = data.filter(c => c.id != null && c.nome);
+
+        grupos.clear();
+        convidados.forEach(c => {
+          const grupo = c.grupo || 'Sem grupo';
+          if (!grupos.has(grupo)) grupos.set(grupo, []);
+          grupos.get(grupo).push(c);
+        });
+
+        setStatus('');
+      } catch (err) {
+        console.error(err);
+        setStatus('Erro ao carregar convidados.', false);
+      }
     }
 
-    function update() {
-      const scrollY = lastScrollY;
-      const heroHeight = getHeroHeight();
-      let progress = scrollY / heroHeight; // 0..1
-      if (progress < 0) progress = 0;
-      if (progress > 1) progress = 1;
+    // =========================
+    // Buscar convidado
+    // =========================
+    function buscar() {
+      const q = norm(inputNome.value);
+      listaResultados.innerHTML = '';
+      grupoArea.hidden = true;
+      grupoLista.innerHTML = '';
+      convidadoSelecionado = null;
+      btnEnviar.disabled = true;
 
-      const opacity = 1 - progress;
+      if (!q) return;
 
-      if (heroImg) {
-        heroImg.style.opacity = String(opacity);
-        heroImg.style.transform = `translateY(${progress * -15}px) scale(${1 + progress * 0.02})`;
-        heroImg.style.willChange = 'transform, opacity';
-      }
-      if (overlay) {
-        overlay.style.opacity = String(Math.max(0, opacity * 1)); // mantém o gradiente
-        overlay.style.willChange = 'opacity';
-      }
-      if (heroContent) {
-        heroContent.style.opacity = String(Math.max(0.35, opacity));
-        heroContent.style.transform = `translateY(${progress * -10}px)`;
-        heroContent.style.willChange = 'transform, opacity';
-      }
+      convidados
+        .filter(c => norm(c.nome).includes(q))
+        .slice(0, 20)
+        .forEach(c => {
+          const li = document.createElement('li');
+          const btn = document.createElement('button');
 
-      ticking = false;
+          btn.type = 'button';
+          btn.className = 'resultado-btn';
+          btn.textContent = c.nome;
+          btn.addEventListener('click', () => selecionarConvidado(c));
+
+          li.appendChild(btn);
+          listaResultados.appendChild(li);
+        });
     }
 
-    function onScroll() {
-      lastScrollY = window.scrollY;
-      if (!ticking) {
-        window.requestAnimationFrame(update);
-        ticking = true;
-      }
+    // =========================
+    // Selecionar convidado
+    // =========================
+    function selecionarConvidado(c) {
+      convidadoSelecionado = c;
+      inputNome.value = c.nome;
+      listaResultados.innerHTML = '';
+
+      const membros = grupos.get(c.grupo || 'Sem grupo') || [c];
+      grupoLista.innerHTML = '';
+
+      membros.forEach(m => {
+        const label = document.createElement('label');
+        label.className = 'checkbox-item';
+
+        const input = document.createElement('input');
+        input.type = 'checkbox';
+        input.checked = !!m.presenca;
+        input.dataset.id = m.id;
+
+        const span = document.createElement('span');
+        span.textContent = m.nome;
+
+        label.appendChild(input);
+        label.appendChild(span);
+        grupoLista.appendChild(label);
+      });
+
+      grupoArea.hidden = false;
+      btnEnviar.disabled = false;
+      setStatus('');
     }
 
-    const recalc = () => { lastScrollY = window.scrollY; update(); };
-    window.addEventListener('scroll', onScroll, { passive: true });
-    window.addEventListener('resize', recalc, { passive: true });
-    window.addEventListener('orientationchange', recalc);
-    update(); // estado inicial
-  }
+    // =========================
+    // Enviar confirmação
+    // =========================
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      if (enviando || !convidadoSelecionado) return;
 
-  // ===== Header transparente sobre o hero: fica sólido ao sair do hero
-  const header = document.querySelector('.site-header');
-  const heroSection = document.querySelector('.hero');
-  if (header && heroSection) {
-    const makeSolid = (solid) => header.classList.toggle('is-solid', solid);
+      const payload = Array.from(
+        grupoLista.querySelectorAll('input[type="checkbox"]')
+      ).map(ch => ({
+        id: Number(ch.dataset.id),
+        presenca: ch.checked
+      }));
 
-    if ('IntersectionObserver' in window) {
-      const obs = new IntersectionObserver(
-        ([entry]) => { makeSolid(!entry.isIntersecting); },
-        { rootMargin: '-64px 0px 0px 0px', threshold: 0 }
-      );
-      obs.observe(heroSection);
-    } else {
-      // fallback simples
-      const onScroll2 = () => {
-        const h = heroSection.getBoundingClientRect();
-        makeSolid(h.bottom <= 64);
+      if (!payload.length) {
+        setStatus('Selecione ao menos uma pessoa.', false);
+        return;
+      }
+
+      try {
+        enviando = true;
+        btnEnviar.disabled = true;
+        setStatus('Enviando confirmação…');
+
+        const res = await fetch(POST_CONFIRMACAO_URL, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Accept: 'application/json'
+          },
+          body: JSON.stringify({ info: payload })
+        });
+
+        if (!res.ok) throw new Error('Erro ao enviar confirmação');
+
+        setStatus('');
+        mostrarPopupSucesso();
+      } catch (err) {
+        console.error(err);
+        setStatus('Erro ao enviar confirmação.', false);
+        btnEnviar.disabled = false;
+      } finally {
+        enviando = false;
+      }
+    });
+
+    // =========================
+    // Popup + refresh
+    // =========================
+    function mostrarPopupSucesso() {
+      popup.hidden = false;
+      document.body.style.overflow = 'hidden';
+
+      const fechar = () => {
+        popup.hidden = true;
+        document.body.style.overflow = '';
+        window.location.reload(); // 🔄 refresh
       };
-      window.addEventListener('scroll', onScroll2, { passive: true });
-      window.addEventListener('resize', onScroll2, { passive: true });
-      onScroll2();
+
+      btnOkPopup?.focus();
+      btnOkPopup?.addEventListener('click', fechar, { once: true });
+
+      popup.addEventListener('click', (e) => {
+        if (e.target === popup) fechar();
+      }, { once: true });
+
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') fechar();
+      }, { once: true });
     }
-  }
-});
+
+    // =========================
+    // Eventos
+    // =========================
+    btnBuscar.addEventListener('click', buscar);
+
+    inputNome.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        buscar();
+      }
+    });
+
+    // Start
+    carregarConvidados();
+  });
+})();
